@@ -2,19 +2,31 @@
   "name": "eltrue-mail-processor",
   "version": "0.1.0",
   "private": true,
+  "main": "app.js",
   "dependencies": {
-    "@types/jest": "24.0.23",
-    "@types/node": "12.12.14",
+    "@types/express": "^4.17.2",
+    "@types/lodash": "^4.14.149",
+    "@types/node": "^12.12.14",
+    "@types/pdfkit": "^0.10.4",
     "@types/react": "16.9.13",
     "@types/react-dom": "16.9.4",
+    "express": "^4.17.1",
+    "googleapis": "^45.0.0",
+    "ipp": "^2.0.1",
+    "lodash": "^4.17.15",
+    "moment": "^2.24.0",
+    "pdfkit": "^0.10.0",
     "react": "^16.12.0",
     "react-dom": "^16.12.0",
     "react-scripts": "3.2.0",
+    "ts-node-dev": "^1.0.0-pre.44",
     "typescript": "3.7.2"
   },
   "scripts": {
+    "start:srv": "ts-node-dev --inspect --project ./tsconfig.srv.json ./src-srv/app.ts",
     "start": "react-scripts start",
     "build": "react-scripts build",
+    "build:srv": "tsc --project ./tsconfig.srv.json",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
@@ -32,5 +44,10 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "devDependencies": {
+    "@types/jest": "^24.0.23",
+    "jest": "^24.9.0",
+    "ts-jest": "^24.2.0"
   }
 }
