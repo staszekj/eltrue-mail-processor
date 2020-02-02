@@ -179,11 +179,17 @@ const cfg = {
 
 export const log = (prefix: string, attachmentInfo: TAttachmentInfo) => {
     if (cfg.debug) {
-        console.log(prefix, attachmentInfo.timeStamp.format(), attachmentInfo.pagesRanges, attachmentInfo.reason, attachmentInfo.sentDateMmtUtc.format(), attachmentInfo.from);
+        console.log(prefix,
+            attachmentInfo.timeStamp.format(),
+            attachmentInfo.pagesRanges,
+            attachmentInfo.reason,
+            attachmentInfo.sentDateMmtUtc.format(),
+            attachmentInfo.from
+        );
     }
 };
 
-export const handleMessage = async (processedAttachments: { [key: string]: TAttachmentInfo }, msgId: string): Promise<TAttachmentInfo | null> => {
+export const handleMessage = async (processedAttachments: { [attachementId: string]: TAttachmentInfo }, msgId: string): Promise<TAttachmentInfo | null> => {
     const gmailApi = await getGmailApi();
     const messageResponse = await gmailApi.users.messages.get({
         id: msgId,
@@ -278,7 +284,7 @@ export const listMessages = async () => {
         userId: 'me',
     });
 
-    //todo read processedAttachment here
+    //todo read processedAttachmentInfo from file here
     const processedAttachments: { [attachementId: string]: TAttachmentInfo } = {};
 
     const array: Array<Promise<TAttachmentInfo | null>> = _.map(messagesResponse.data.messages, message => {
@@ -291,6 +297,6 @@ export const listMessages = async () => {
     const processed: Array<TAttachmentInfo | null> = await Promise.all(array);
     const newProcessedAttachment: TAttachmentInfo[] = _.compact(processed);
 
-    //todo write newProcessedAttachment here
+    //todo write newProcessedAttachmentInfo to file here
 
 };
