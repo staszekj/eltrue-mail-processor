@@ -1,5 +1,5 @@
 import express from "express";
-import {getNewToken, messageToWrite, listMessages} from "./gmail"
+import {getNewToken, handleMessage, listMessages} from "./gmail"
 
 const app = express();
 app.get("/", (req, res) => {

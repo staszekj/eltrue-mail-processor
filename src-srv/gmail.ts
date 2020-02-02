@@ -8,6 +8,7 @@ import moment, {Moment} from 'moment';
 import path from 'path';
 import {Printer} from "ipp";
 import {appendSuccessEntry, getLastModificationTime} from "./log";
+import {json} from "express";
 
 interface TWriteMessageProps {
     messageId: string
@@ -20,10 +21,23 @@ interface TWriteMessageProps {
     dataBase64: string
 }
 
+interface TAttachmentInfo {
+    timeStamp: Moment;
+    pagesRanges: string | null;
+    reason: string | null;
+    sentDateMmtUtc: Moment;
+    from: string;
+    subject: string,
+    fileName: string,
+    messageId: string,
+    attachmentId: string
+}
+
 const SCOPES = ['https://www.googleapis.com/auth/gmail.readonly'];
 const TOKEN_PATH = 'token.json';
 const {client_secret, client_id, redirect_uris} = credentials.installed;
-const pdfPath = './data/';
+const dataDir = './data/';
+const attachmentsFileName = 'processed-attachement.json';
 
 const getAuthClientFromToken = (token: Credentials) => {
     const oAuth2Client = new OAuth2Client(
@@ -100,20 +114,6 @@ const getSavedOAuthClient: () => Promise<OAuth2Client> = async () => {
     return getAuthClientFromToken(token);
 };
 
-export const listMessages = async () => {
-    const gmailApi = await getGmailApi();
-    const lastModificationTime: Moment = getLastModificationTime();
-    const messagesResponse = await gmailApi.users.messages.list({
-        userId: 'me',
-    });
-
-    _.forEach(messagesResponse.data.messages, async message => {
-        if (!message.id) return;
-        await messageToWrite(message.id)
-    });
-
-};
-
 export const getTo = (message: gmail_v1.Schema$Message) => {
     const payload = message.payload;
     const headers = payload && payload.headers;
@@ -121,13 +121,13 @@ export const getTo = (message: gmail_v1.Schema$Message) => {
     return subjectHeader.join(',');
 };
 
-
 export const getFrom = (message: gmail_v1.Schema$Message) => {
     const payload = message.payload;
     const headers = payload && payload.headers;
     const subjectHeader = _.find(headers, {name: "From"});
     return subjectHeader && subjectHeader.value;
 };
+
 
 export const getSubject = (message: gmail_v1.Schema$Message) => {
     const payload = message.payload;
@@ -150,14 +150,40 @@ export const findPdfPart = (message: gmail_v1.Schema$Message) => {
 };
 
 export const getPagesRanges = (subject: string, fileName: string, from: string, to: string) => {
-    if (subject.toLocaleLowerCase().startsWith("re:")) return null;
-    if (subject.toLocaleLowerCase().startsWith("odp:")) return null;
-    if (to.toLocaleLowerCase().includes("_infolet.pl")) return null;
-    if (!fileName.toLocaleLowerCase().includes("faktura")) return null;
-    return "1-3";
+    if (!fileName.toLocaleLowerCase().includes("faktura")) return {
+        pagesRanges: null,
+        reason: "SUBJECT NOT: faktura"
+    };
+    if (to.toLocaleLowerCase().includes("infolet.pl")) return {
+        pagesRanges: null,
+        reason: "TO: infolet.pl"
+    };
+    if (subject.toLocaleLowerCase().startsWith("re:")) return {
+        pagesRanges: null,
+        reason: "SUBJECT: re:"
+    };
+    if (subject.toLocaleLowerCase().startsWith("odp:")) return {
+        pagesRanges: null,
+        reason: "SUBJECT: odp:"
+    };
+    return {
+        pagesRanges: '1-3',
+        reason: null
+    };
 };
 
-export const messageToWrite = async (msgId: string) => {
+const cfg = {
+    debug: true,
+    print: false
+};
+
+export const log = (prefix: string, attachmentInfo: TAttachmentInfo) => {
+    if (cfg.debug) {
+        console.log(prefix, attachmentInfo.timeStamp.format(), attachmentInfo.pagesRanges, attachmentInfo.reason, attachmentInfo.sentDateMmtUtc.format(), attachmentInfo.from);
+    }
+};
+
+export const handleMessage = async (processedAttachments: { [key: string]: TAttachmentInfo }, msgId: string): Promise<TAttachmentInfo | null> => {
     const gmailApi = await getGmailApi();
     const messageResponse = await gmailApi.users.messages.get({
         id: msgId,
@@ -171,36 +197,61 @@ export const messageToWrite = async (msgId: string) => {
     const pdfPart = findPdfPart(message);
     const fileName = pdfPart && pdfPart.filename;
     const attachmentId = pdfPart && pdfPart.body && pdfPart.body.attachmentId;
-    if (!subject || !fileName || !attachmentId || !sentDateMmtUtc || !from || !to) return;
+    if (!subject || !fileName || !attachmentId || !sentDateMmtUtc || !from || !to) {
+        return null;
+    }
+    const processedAttachment = processedAttachments[attachmentId];
+    if (processedAttachment) {
+        log("ALREADY PROCESSED", processedAttachment);
+        return processedAttachment;
+    }
+    const pagesRanges = getPagesRanges(subject, fileName, from, to);
+    const inProgessAttachment: TAttachmentInfo = {
+        timeStamp: moment(),
+        reason: pagesRanges.reason,
+        pagesRanges: pagesRanges.pagesRanges,
+        sentDateMmtUtc: sentDateMmtUtc,
+        from: from,
+        subject: subject,
+        fileName: fileName,
+        messageId: msgId,
+        attachmentId: attachmentId
+    };
+    if (!pagesRanges.pagesRanges) {
+        log("NOT PRINTING", inProgessAttachment);
+        return inProgessAttachment;
+    }
     const attResponse = await gmailApi.users.messages.attachments.get({
         id: attachmentId,
         messageId: msgId,
         userId: 'me'
     });
     const dataBase64 = attResponse.data.data;
-    if (!dataBase64) return;
-    const pagesRanges = getPagesRanges(subject, fileName, from, to);
-    if (!pagesRanges) return;
-    await printMessage({
-        messageId: msgId,
-        subject,
-        fileName,
-        sentDateMmtUtc,
-        pagesRanges,
-        from,
-        to,
-        dataBase64
-    });
+    if (!dataBase64) {
+        const errorAttachmentInfo = {
+            ...inProgessAttachment,
+            pagesRanges: null,
+            reason: `ERROR(no data in attachment part)`
+        };
+        log("ERROR", errorAttachmentInfo);
+        return errorAttachmentInfo;
+    }
+    if (cfg.print) {
+        try {
+            await printFile(Buffer.from(dataBase64, 'base64'), pagesRanges.pagesRanges);
+        } catch(e) {
+            log("ERROR-PRINTED: " + e, inProgessAttachment);
+            return null;
+        }
+        log("PRINTED", inProgessAttachment);
+    } else {
+        log("DRY-PRINTED", inProgessAttachment);
+    }
+    return inProgessAttachment;
 };
 
-const getPdfFileName = (props: Pick<TWriteMessageProps, "fileName" | "sentDateMmtUtc" | "subject">) => {
-    const {sentDateMmtUtc, fileName} = props;
-    return [sentDateMmtUtc.format('YYYY_MM_DD_hh_mm_ss'), fileName].join("-");
-};
-
-
-const writeFile = (fileName: string, dataBase64: Buffer) => new Promise((resolve, reject) => {
-    fs.writeFile(fileName, dataBase64, (err) => {
+const writeProcessedAttachements = (processedAttachments: TAttachmentInfo[]) => new Promise((resolve, reject) => {
+    fs.writeFile(path.join(dataDir, attachmentsFileName), JSON.stringify(processedAttachments), (err) => {
         if (err) return reject(err);
         resolve();
     });
@@ -217,17 +268,29 @@ const printFile = (dataBase64: Buffer, pageRanges: string) => new Promise((resol
     };
     printer.execute("Print-Job", msg, (err: any, res: any) => {
         if (err) return reject(err);
-        console.log(res);
         resolve(res);
     });
 });
 
-export const printMessage = async (props: TWriteMessageProps) => {
-    const {dataBase64} = props;
-    const dataBuffer = Buffer.from(dataBase64, 'base64');
-    const pdfFileName = getPdfFileName(props);
-    const pathToPdfFileName = path.join(pdfPath, pdfFileName);
-    await writeFile(pathToPdfFileName, dataBuffer);
-    //await printFile(dataBuffer, props.pagesRanges);
-    appendSuccessEntry(pdfFileName);
+export const listMessages = async () => {
+    const gmailApi = await getGmailApi();
+    const messagesResponse = await gmailApi.users.messages.list({
+        userId: 'me',
+    });
+
+    //todo read processedAttachment here
+    const processedAttachments: { [attachementId: string]: TAttachmentInfo } = {};
+
+    const array: Array<Promise<TAttachmentInfo | null>> = _.map(messagesResponse.data.messages, message => {
+        if (!message.id) {
+            return Promise.resolve(null);
+        }
+        return handleMessage(processedAttachments, message.id)
+    });
+
+    const processed: Array<TAttachmentInfo | null> = await Promise.all(array);
+    const newProcessedAttachment: TAttachmentInfo[] = _.compact(processed);
+
+    //todo write newProcessedAttachment here
+
 };
