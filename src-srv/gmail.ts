@@ -7,19 +7,6 @@ import _ from 'lodash';
 import moment, {Moment} from 'moment';
 import path from 'path';
 import {Printer} from "ipp";
-import {appendSuccessEntry, getLastModificationTime} from "./log";
-import {json} from "express";
-
-interface TWriteMessageProps {
-    messageId: string
-    subject: string,
-    fileName: string,
-    sentDateMmtUtc: Moment;
-    pagesRanges: string;
-    from: string;
-    to: string;
-    dataBase64: string
-}
 
 interface TAttachmentInfo {
     timeStamp: Moment;
@@ -167,7 +154,7 @@ export const getPagesRanges = (subject: string, fileName: string, from: string, 
         reason: "SUBJECT: odp:"
     };
     return {
-        pagesRanges: '1-3',
+        pagesRanges: '1',
         reason: null
     };
 };
@@ -189,7 +176,7 @@ export const log = (prefix: string, attachmentInfo: TAttachmentInfo) => {
     }
 };
 
-export const handleMessage = async (processedAttachments: { [attachementId: string]: TAttachmentInfo }, msgId: string): Promise<TAttachmentInfo | null> => {
+export const handleMessage = async (processedAttachments: { [attachmentId: string]: TAttachmentInfo }, msgId: string): Promise<TAttachmentInfo | null> => {
     const gmailApi = await getGmailApi();
     const messageResponse = await gmailApi.users.messages.get({
         id: msgId,
@@ -214,8 +201,8 @@ export const handleMessage = async (processedAttachments: { [attachementId: stri
     const pagesRanges = getPagesRanges(subject, fileName, from, to);
     const inProgessAttachment: TAttachmentInfo = {
         timeStamp: moment(),
-        reason: pagesRanges.reason,
         pagesRanges: pagesRanges.pagesRanges,
+        reason: pagesRanges.reason,
         sentDateMmtUtc: sentDateMmtUtc,
         from: from,
         subject: subject,
@@ -245,7 +232,7 @@ export const handleMessage = async (processedAttachments: { [attachementId: stri
     if (cfg.print) {
         try {
             await printFile(Buffer.from(dataBase64, 'base64'), pagesRanges.pagesRanges);
-        } catch(e) {
+        } catch (e) {
             log("ERROR-PRINTED: " + e, inProgessAttachment);
             return null;
         }
@@ -263,17 +250,19 @@ const writeProcessedAttachements = (processedAttachments: TAttachmentInfo[]) => 
     });
 });
 
-const printFile = (dataBase64: Buffer, pageRanges: string) => new Promise((resolve, reject) => {
+const printFile = (dataBase64: Buffer, pagesRanges: string) => new Promise((resolve, reject) => {
     const printer = new Printer("http://192.168.2.2:631/printers/Brother_DCP-7030");
     const msg = {
         "operation-attributes-tag": {
             "document-format": "application/pdf",
         },
-        'page-ranges': pageRanges,
-        data: dataBase64
+        "page-ranges": pagesRanges,
+        "data": dataBase64
     };
     printer.execute("Print-Job", msg, (err: any, res: any) => {
-        if (err) return reject(err);
+        if (err) {
+            return reject(err);
+        }
         resolve(res);
     });
 });
@@ -285,17 +274,18 @@ export const listMessages = async () => {
     });
 
     //todo read processedAttachmentInfo from file here
-    const processedAttachments: { [attachementId: string]: TAttachmentInfo } = {};
+    const attachmentId: keyof TAttachmentInfo = "attachmentId";
+    const processedAttachments = _.keyBy<TAttachmentInfo>([], attachmentId);
 
-    const array: Array<Promise<TAttachmentInfo | null>> = _.map(messagesResponse.data.messages, message => {
+    const attachmentInfoPromisesArray: Array<Promise<TAttachmentInfo | null>> = _.map(messagesResponse.data.messages, message => {
         if (!message.id) {
             return Promise.resolve(null);
         }
         return handleMessage(processedAttachments, message.id)
     });
 
-    const processed: Array<TAttachmentInfo | null> = await Promise.all(array);
-    const newProcessedAttachment: TAttachmentInfo[] = _.compact(processed);
+    const attachmentInfoArray: Array<TAttachmentInfo | null> = await Promise.all(attachmentInfoPromisesArray);
+    const newProcessedAttachments: TAttachmentInfo[] = _.compact(attachmentInfoArray);
 
     //todo write newProcessedAttachmentInfo to file here
 
