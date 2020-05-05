@@ -97,7 +97,7 @@ export const getNewToken: () => Promise<Credentials> = async () => {
 };
 
 const getSavedOAuthClient: () => Promise<OAuth2Client> = async () => {
-    const token = await readToken();
+    const token = fs.existsSync(TOKEN_PATH) ? await readToken() : await getNewToken();
     return getAuthClientFromToken(token);
 };
 
@@ -243,6 +243,17 @@ export const handleMessage = async (processedAttachments: { [attachmentId: strin
     return inProgessAttachment;
 };
 
+const readProcessedAttachements = () => new Promise<TAttachmentInfo[]>((resolve, reject) => {
+    const pathToFile = path.join(dataDir, attachmentsFileName);
+    if(!fs.existsSync(pathToFile)) {
+        return resolve([]);
+    }
+    return fs.readFile(pathToFile, (err, res) => {
+        if (err) return reject(err);
+        resolve(JSON.parse(res.toString()));
+    });
+});
+
 const writeProcessedAttachements = (processedAttachments: TAttachmentInfo[]) => new Promise((resolve, reject) => {
     fs.writeFile(path.join(dataDir, attachmentsFileName), JSON.stringify(processedAttachments), (err) => {
         if (err) return reject(err);
@@ -273,9 +284,9 @@ export const listMessages = async () => {
         userId: 'me',
     });
 
-    //todo read processedAttachmentInfo from file here
+    const processAttachmentJson = await readProcessedAttachements();
     const attachmentId: keyof TAttachmentInfo = "attachmentId";
-    const processedAttachments = _.keyBy<TAttachmentInfo>([], attachmentId);
+    const processedAttachments = _.keyBy<TAttachmentInfo>(processAttachmentJson, attachmentId);
 
     const attachmentInfoPromisesArray: Array<Promise<TAttachmentInfo | null>> = _.map(messagesResponse.data.messages, message => {
         if (!message.id) {
@@ -287,6 +298,5 @@ export const listMessages = async () => {
     const attachmentInfoArray: Array<TAttachmentInfo | null> = await Promise.all(attachmentInfoPromisesArray);
     const newProcessedAttachments: TAttachmentInfo[] = _.compact(attachmentInfoArray);
 
-    //todo write newProcessedAttachmentInfo to file here
-
+    await writeProcessedAttachements(newProcessedAttachments);
 };
